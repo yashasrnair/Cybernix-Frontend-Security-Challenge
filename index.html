@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Cybernix — Frontend Live Bugfix</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .box { border: 1px solid #ddd; padding: 16px; margin-bottom: 12px; border-radius: 6px; }
+    input, button { padding: 8px; margin: 6px 0; width: 100%; box-sizing: border-box; }
+    #results li { margin:6px 0; }
+  </style>
+</head>
+<body>
+  <h2>Cybernix Live Bugfix</h2>
+
+  <div class="box" id="authBox">
+    <h3>Login (mock)</h3>
+    <input id="username" placeholder="username" />
+    <input id="password" type="password" placeholder="password" />
+    <button id="loginBtn">Login</button>
+    <p id="loginStatus"></p>
+  </div>
+
+  <div class="box" id="searchBox" hidden>
+    <h3>Search Users</h3>
+    <input id="searchInput" placeholder="search by name" />
+    <ul id="results"></ul>
+  </div>
+
+  <div class="box" id="adminBox" hidden>
+    <h3>Admin Panel</h3>
+    <label>Message to show to user (unsafe demo):</label>
+    <input id="adminMessage" placeholder="Type HTML or message" />
+    <button id="setMessage">Set Message</button>
+    <div id="publicMessage"></div>
+
+    <h4>Dangerous API response area</h4>
+    <button id="loadData">Load Data (mock fetch)</button>
+    <pre id="rawData"></pre>
+  </div>
+
+  <script>
+    /**********************
+     * Mock backend logic *
+     **********************/
+    const mockUsers = [
+      { id: 1, name: 'Alice <script>console.log("alice")</script>', role: 'user' },
+      { id: 2, name: 'Bob', role: 'admin' },
+      { id: 3, name: 'Charlie', role: 'user' },
+    ];
+
+    // This "mockFetch" returns a string that looks like JSON but will be parsed unsafely later
+    function mockFetch(url, options = {}) {
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          // returns a JSON-like string intentionally
+          const body = "({ users: " + JSON.stringify(mockUsers) + " })"; // note: not pure JSON
+          resolve({ status: 200, text: () => Promise.resolve(body) });
+        }, 300);
+      });
+    }
+
+    /*****************
+     * Auth handling *
+     *****************/
+    document.getElementById('loginBtn').addEventListener('click', async () => {
+      const u = document.getElementById('username').value.trim();
+      const p = document.getElementById('password').value;
+
+      // "insecure" password handling: just base64 the password (not hashing)
+      const token = btoa(u + ':' + p); // insecure
+      // store token client-side insecurely
+      localStorage.setItem('auth_token', token);
+
+      // naive check (no server validation)
+      if (u && p) {
+        // show a welcome with inserted username — intentionally using innerHTML (XSS risk)
+        document.getElementById('loginStatus').innerHTML = '<b>Welcome, ' + u + '!</b>';
+        // reveal the app
+        document.getElementById('searchBox').hidden = false;
+        document.getElementById('adminBox').hidden = false;
+      } else {
+        document.getElementById('loginStatus').textContent = 'Invalid creds';
+      }
+    });
+
+    /****************
+     * Search logic *
+     ****************/
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      const q = e.target.value.toLowerCase();
+      // naive client-side filter — results injected via innerHTML (unsafe)
+      const results = mockUsers
+        .filter(u => u.name.toLowerCase().includes(q))
+        .map(u => `<li>${u.name} (${u.role})</li>`)
+        .join('');
+      document.getElementById('results').innerHTML = results;
+    });
+
+    /**********************
+     * Admin unsafe actions
+     **********************/
+    document.getElementById('setMessage').addEventListener('click', () => {
+      const msg = document.getElementById('adminMessage').value;
+      // intentionally vulnerable: admin can set arbitrary HTML (XSS)
+      document.getElementById('publicMessage').innerHTML = msg;
+    });
+
+    document.getElementById('loadData').addEventListener('click', async () => {
+      const res = await mockFetch('/api/users');
+      const raw = await res.text();
+
+      // developer used eval instead of safe JSON.parse => insecure
+      try {
+        const parsed = eval(raw); // <-- intentional vulnerability
+        document.getElementById('rawData').textContent = JSON.stringify(parsed, null, 2);
+      } catch (e) {
+        document.getElementById('rawData').textContent = 'Parse error: ' + e;
+      }
+    });
+
+    /*****************************
+     * postMessage (trust problem)
+     * listens to messages and runs a callback trusting origin
+     *****************************/
+    window.addEventListener('message', (evt) => {
+      // insecure: trusting any origin; an attacker could postMessage malicious payload
+      if (evt.data && evt.data.cmd === 'logout') {
+        // clear token
+        localStorage.removeItem('auth_token');
+        alert('Logged out by message: ' + evt.origin);
+      }
+    });
+  </script>
+</body>
+</html>
